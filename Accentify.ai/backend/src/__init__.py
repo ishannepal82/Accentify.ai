@@ -1,10 +1,10 @@
-from redis.asyncio import Redis
-from motor.motor_asyncio import AsyncIOMotorClient
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-import logging
+from src.tests.routes import test_router
 from src.config.Config import Config as ConfigClass
+from src.config.db import init_db, close_db
+from src.config.redis import init_redis, close_redis
+from src.middlewares.cors import setup_cors
 
 Config = ConfigClass()
 
@@ -16,38 +16,23 @@ def create_app() -> FastAPI:
         version="0.1.0",
     )
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+     # Setup CORS
+    setup_cors(app)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        app.state.mongo_client = AsyncIOMotorClient(Config.mongo_uri)
-        app.state.mongodb = app.state.mongo_client.get_database()
-        app.state.redis = Redis.from_url(
-        Config.redis_uri,
-        decode_responses=True,
-        )
-        logging.info("MongoDB and Redis clients initialized")
+        # Initialize MongoDB
+        await init_db(app)
+        # Initialize Redis
+        await init_redis(app)
+
         yield
-        app.state.mongo_client.close()
-        await app.state.redis.close()
-        logging.info("MongoDB and Redis clients closed")
+        # Close MongoDB
+        await close_db(app)
+        # Close Redis
+        await close_redis(app)
 
     app.router.lifespan_context = lifespan
 
-    @app.get("/health", tags=["Health"])
-    async def health_check():
-        mongo_ping = await app.state.mongodb.command("ping")
-        redis_ping = await app.state.redis.ping()
-        return {
-            "status": "ok",
-            "mongo": mongo_ping,
-            "redis": redis_ping,
-        }
-
+    app.include_router(test_router)
     return app
